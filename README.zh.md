@@ -5,6 +5,22 @@
 Select any text in a DeepSeek Harness conversation and tap **Explain** to get a
 streaming Markdown explanation bubble, with recursive follow-up questions.
 
+## 宣传片
+
+46 秒快速了解这个插件：
+
+<p align="center">
+  <video src="docs/promo/dsh-bubble-explain-promo.mp4" poster="docs/promo/poster.png" controls width="720"></video>
+</p>
+
+[▶ 观看完整宣传片](docs/promo/dsh-bubble-explain-promo.mp4)
+
+- **框选 → 解释**：在对话中选中任意文字，点击「解释」按钮。
+- **流式 Markdown**：解释以 Markdown 实时流式呈现（标题、列表、代码块）。
+- **递归追问**：在解释气泡内继续框选，层层深入（最多 6 层）。
+- **非侵入覆盖层**：可拖动、一键复制，上限 8 个。
+- **可配置**：在 **设置 → 通用** 里调整开关、递归深度与长度。
+
 ## 功能特性
 
 - **框选即解释**：在对话中选中任意文字（术语、代码、报错、句子等），选中处出现待触发的「解释」按钮，点击弹出解释气泡。

@@ -5,6 +5,24 @@ streaming Markdown explanation bubble, with recursive follow-up questions.
 
 对话中框选任意文字，点击「解释」按钮，弹出 Markdown 实时流式解释气泡，支持递归追问。
 
+## Promo
+
+A 46-second overview of the plugin:
+
+<p align="center">
+  <video src="docs/promo/dsh-bubble-explain-promo.mp4" poster="docs/promo/poster.png" controls width="720"></video>
+</p>
+
+[▶ Watch the full video](docs/promo/dsh-bubble-explain-promo.mp4)
+
+- **Selection → Explain** — select any text in a conversation and tap **解释**.
+- **Streaming Markdown** — the explanation streams in as live Markdown (headings,
+  lists, code blocks).
+- **Recursive follow-up** — select text inside the bubble to drill deeper
+  (up to 6 levels).
+- **Non-intrusive overlay** — draggable, with a copy button, capped at 8 bubbles.
+- **Configurable** — toggle, max depth and length from **Settings → General**.
+
 ## Features
 
 - **Selection → Explain**: select any text in a conversation (terms, code,
