@@ -1,0 +1,9 @@
+# dsh-bubble-explain bundle patch
+#
+# Registered into the web profile bundle stack by `dsh plugin --profile web
+# add` (the dsh.bundle.patch declaration). Inserts the plugin row so both the
+# host half (/bubble-explain/stream + /bubble-explain/settings routes) and
+# the client half (shell.overlay overlay + settings.section entry) mount.
+- insert:
+    - id: bubble-explain
+      name: '@dsh-external/bubble-explain'
