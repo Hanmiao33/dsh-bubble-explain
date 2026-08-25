@@ -3,3 +3,4 @@ lib/
 .client-build/
 *.tsbuildinfo
 *.tgz
+docs/promo/
