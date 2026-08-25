@@ -8,7 +8,9 @@ import {
   MAX_PARENT_CHARS,
   MAX_TEXT_CHARS,
   MIN_MAX_CHARS,
+  normalizeEffort,
   parseExplainRequest,
+  resolveEffortForRoute,
   resolveModelRoute,
 } from './explain.js'
 import type { Context } from '@deepseek-ai/cordis'
@@ -139,5 +141,49 @@ describe('resolveModelRoute', () => {
 
   it('throws when nothing is available', () => {
     expect(() => resolveModelRoute(makeCtx([]))).toThrow(/没有可用的 LLM 路由/)
+  })
+})
+
+describe('normalizeEffort', () => {
+  it('passes known ids through and defaults everything else', () => {
+    for (const id of ['off', 'low', 'medium', 'high', 'max'] as const) {
+      expect(normalizeEffort(id)).toBe(id)
+    }
+    expect(normalizeEffort('bogus')).toBe('off')
+    expect(normalizeEffort(42)).toBe('off')
+    expect(normalizeEffort(undefined)).toBe('off')
+    expect(normalizeEffort(null)).toBe('off')
+  })
+})
+
+describe('resolveEffortForRoute', () => {
+  const efforts = (ids: string[]) => ids.map((id) => ({ id }))
+
+  it('honors an exact declared match', () => {
+    const deepseek = { reasoning: { efforts: efforts(['off', 'high', 'max']) } }
+    expect(resolveEffortForRoute(deepseek, 'high')).toBe('high')
+    expect(resolveEffortForRoute(deepseek, 'max')).toBe('max')
+    expect(resolveEffortForRoute(deepseek, 'off')).toBe('off')
+  })
+
+  it('falls back to the strongest declared level not stronger than requested', () => {
+    const deepseek = { reasoning: { efforts: efforts(['off', 'high', 'max']) } }
+    expect(resolveEffortForRoute(deepseek, 'medium')).toBe('off')
+    expect(resolveEffortForRoute(deepseek, 'low')).toBe('off')
+    const openai = { reasoning: { efforts: efforts(['off', 'medium', 'high']) } }
+    expect(resolveEffortForRoute(openai, 'low')).toBe('off')
+    expect(resolveEffortForRoute(openai, 'max')).toBe('high')
+  })
+
+  it('uses the weakest declared level when every declared level is stronger', () => {
+    const strongOnly = { reasoning: { efforts: efforts(['high', 'max']) } }
+    expect(resolveEffortForRoute(strongOnly, 'low')).toBe('high')
+  })
+
+  it('returns undefined when no reasoning metadata or only unknown ids are declared', () => {
+    expect(resolveEffortForRoute(undefined, 'high')).toBeUndefined()
+    expect(resolveEffortForRoute({}, 'high')).toBeUndefined()
+    expect(resolveEffortForRoute({ reasoning: { efforts: [] } }, 'high')).toBeUndefined()
+    expect(resolveEffortForRoute({ reasoning: { efforts: efforts(['turbo', 'mega']) } }, 'high')).toBeUndefined()
   })
 })

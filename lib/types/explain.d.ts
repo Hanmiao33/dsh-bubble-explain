@@ -14,6 +14,28 @@ export declare const MAX_DEPTH = 6;
 export declare const DEFAULT_MAX_CHARS = 300;
 export declare const MIN_MAX_CHARS = 50;
 export declare const MAX_MAX_CHARS = 1000;
+/** Reasoning-effort levels exposed by the plugin, weakest → strongest. */
+export declare const EFFORT_IDS: readonly ["off", "low", "medium", "high", "max"];
+export type EffortId = (typeof EFFORT_IDS)[number];
+export declare const DEFAULT_EFFORT: EffortId;
+/** Strength ordering used to clamp a requested level onto what a model declares. */
+export declare const EFFORT_RANK: Readonly<Record<EffortId, number>>;
+/** Coerce an unknown value into a known effort id; anything else → default. */
+export declare function normalizeEffort(value: unknown): EffortId;
+/**
+ * Pick the effort id actually sent for one resolved model info: honor the
+ * model's declared efforts exactly; otherwise fall back to the closest
+ * declared level not stronger than the request (or the weakest available).
+ * Returns undefined when the model declares no reasoning support — sending
+ * any effort would make dsh-llm reject the call (UNSUPPORTED_REASONING_EFFORT).
+ */
+export declare function resolveEffortForRoute(info: {
+    reasoning?: {
+        efforts: readonly {
+            id: string;
+        }[];
+    };
+} | undefined, wanted: EffortId): EffortId | undefined;
 /** One provider/model route a harness model call can be dispatched through. */
 export interface ModelRoute {
     provider: string;

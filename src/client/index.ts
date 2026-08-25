@@ -29,9 +29,24 @@ interface PluginSettings {
   enabled: boolean
   maxDepth: number
   maxChars: number
+  /** Requested model reasoning strength ('off'|'low'|'medium'|'high'|'max'). */
+  effort: string
 }
 
-const DEFAULT_SETTINGS: PluginSettings = { enabled: true, maxDepth: 6, maxChars: 300 }
+const DEFAULT_SETTINGS: PluginSettings = { enabled: true, maxDepth: 6, maxChars: 300, effort: 'off' }
+
+/** Reasoning-effort options shown in settings; values mirror the host whitelist. */
+const EFFORT_OPTIONS = [
+  { value: 'off', label: '关闭（最快）' },
+  { value: 'low', label: '低' },
+  { value: 'medium', label: '中' },
+  { value: 'high', label: '高' },
+  { value: 'max', label: '最高' },
+] as const
+
+function isEffortId(value: unknown): value is PluginSettings['effort'] {
+  return typeof value === 'string' && EFFORT_OPTIONS.some((option) => option.value === value)
+}
 
 // ---------------------------------------------------------------------------
 // Markdown mini-renderer (streaming-safe; input escaped before structuring)
@@ -176,6 +191,7 @@ const CSS = `
 .bbl-set-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .bbl-set-label{font-size:13px;color:var(--dsw-alias-label-primary,inherit)}
 .bbl-set-row input[type="number"]{width:96px;padding:4px 6px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:6px;background:var(--dsw-alias-bg-base,#1f2329);color:var(--dsw-alias-label-primary,inherit);font-size:13px}
+.bbl-set-row select{padding:4px 6px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:6px;background:var(--dsw-alias-bg-base,#1f2329);color:var(--dsw-alias-label-primary,inherit);font-size:13px;cursor:pointer}
 .bbl-set-row input[type="checkbox"]{width:16px;height:16px;accent-color:var(--dsw-alias-state-business-primary,#6a9bff);cursor:pointer}
 @media (max-width:720px){.bbl{width:calc(100vw - 16px)}}
 `
@@ -226,6 +242,7 @@ class BubbleOverlay {
         if (typeof data.enabled === 'boolean') s.enabled = data.enabled
         if (typeof data.maxDepth === 'number') s.maxDepth = Math.min(MAX_DEPTH, Math.max(1, Math.round(data.maxDepth)))
         if (typeof data.maxChars === 'number') s.maxChars = Math.min(1000, Math.max(50, Math.round(data.maxChars)))
+        if (isEffortId(data.effort)) s.effort = data.effort
         this.settings = s
       })
       .catch(() => undefined)
@@ -582,6 +599,7 @@ function refreshSettings(): void {
         enabled: typeof data.enabled === 'boolean' ? data.enabled : state.settings.enabled,
         maxDepth: typeof data.maxDepth === 'number' ? data.maxDepth : state.settings.maxDepth,
         maxChars: typeof data.maxChars === 'number' ? data.maxChars : state.settings.maxChars,
+        effort: isEffortId(data.effort) ? data.effort : state.settings.effort,
       })
     })
     .catch(() => undefined)
@@ -614,7 +632,7 @@ function SettingsPage(): React.ReactNode {
       React.createElement('span', { className: 'bbl-set-label' }, label), control)
   return React.createElement('div', { className: 'bbl-settings' },
     React.createElement('p', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary,#8a8f98)', lineHeight: 1.7, margin: '0 0 4px' } },
-      '在对话中框选任意文字后，点击出现的「✨ 解释」按钮弹出气泡，Markdown 实时流式解释，支持递归追问。设置即时生效。'),
+      '在对话中框选任意文字后，点击出现的「✨ 解释」按钮弹出气泡，Markdown 实时流式解释，支持递归追问。设置即时生效。「思考强度」控制解释模型的推理力度：档位越高回答越深入但更慢；模型不支持所选档位时自动落到不超过它的最近可用档。'),
     row('启用框选解释',
       React.createElement('input', {
         type: 'checkbox', checked: settings.enabled,
@@ -630,6 +648,15 @@ function SettingsPage(): React.ReactNode {
         type: 'number', min: 50, max: 1000, step: 50, value: settings.maxChars,
         onChange: (ev: React.ChangeEvent<HTMLInputElement>) => submitSettings({ maxChars: Math.min(1000, Math.max(50, Number(ev.target.value) || 300)) }),
       })),
+    row('思考强度',
+      React.createElement('select',
+        {
+          value: settings.effort,
+          onChange: (ev: React.ChangeEvent<HTMLSelectElement>) => submitSettings({ effort: ev.target.value }),
+        },
+        EFFORT_OPTIONS.map((option) =>
+          React.createElement('option', { key: option.value, value: option.value }, option.label))),
+    ),
   )
 }
 

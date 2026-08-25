@@ -5,7 +5,8 @@
  *  - POST /bubble-explain/stream  → SSE stream of the explanation for a
  *    selected text (recursive: carries parent context + depth). Model is
  *    resolved live (agent default → captured main-loop route → first
- *    provider) and the call runs with reasoning off for instant output.
+ *    provider); the reasoning effort comes from persisted settings and is
+ *    clamped onto what the resolved model actually declares.
  *  - GET/POST /bubble-explain/settings → read/write the plugin's persisted
  *    preferences (enabled / maxDepth / maxChars) to $DSH_HOME/envir … a JSON
  *    file so choices survive restarts.
@@ -20,12 +21,16 @@ import { mkdirSync, readFileSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 import os from 'node:os'
 import {
+  DEFAULT_EFFORT,
   DEFAULT_MAX_CHARS,
   MAX_DEPTH,
   buildSystemPrompt,
   buildUserMessage,
+  normalizeEffort,
   parseExplainRequest,
+  resolveEffortForRoute,
   resolveModelRoute,
+  type EffortId,
   type ModelRoute,
 } from './explain.js'
 
@@ -48,12 +53,15 @@ export interface PersistedSettings {
   enabled: boolean
   maxDepth: number
   maxChars: number
+  /** Requested model reasoning strength; clamped per model at call time. */
+  effort: EffortId
 }
 
 const DEFAULT_SETTINGS: PersistedSettings = {
   enabled: true,
   maxDepth: MAX_DEPTH,
   maxChars: DEFAULT_MAX_CHARS,
+  effort: DEFAULT_EFFORT,
 }
 
 const DSH_HOME = process.env.DSH_HOME || join(os.homedir(), '.dsh')
@@ -66,6 +74,7 @@ function loadSettings(): PersistedSettings {
       enabled: typeof raw.enabled === 'boolean' ? raw.enabled : DEFAULT_SETTINGS.enabled,
       maxDepth: clampInt(raw.maxDepth, 1, MAX_DEPTH, DEFAULT_SETTINGS.maxDepth),
       maxChars: clampInt(raw.maxChars, 50, 1000, DEFAULT_SETTINGS.maxChars),
+      effort: normalizeEffort(raw.effort),
     }
   } catch {
     return { ...DEFAULT_SETTINGS }
@@ -77,6 +86,7 @@ function saveSettings(next: PersistedSettings): PersistedSettings {
     enabled: typeof next.enabled === 'boolean' ? next.enabled : DEFAULT_SETTINGS.enabled,
     maxDepth: clampInt(next.maxDepth, 1, MAX_DEPTH, DEFAULT_SETTINGS.maxDepth),
     maxChars: clampInt(next.maxChars, 50, 1000, DEFAULT_SETTINGS.maxChars),
+    effort: normalizeEffort(next.effort),
   }
   try {
     mkdirSync(join(DSH_HOME), { recursive: true })
@@ -198,10 +208,19 @@ export function apply(ctx: AppContext): void {
 
         try {
           let text = ''
+          // Clamp the configured effort onto what this model actually declares;
+          // omit the parameter entirely when lookup fails or reasoning is unsupported.
+          let effortId: EffortId | undefined
+          try {
+            const info = await ctx.llm.resolveModelInfo(route.provider, route.model)
+            effortId = resolveEffortForRoute(info, settings.effort)
+          } catch {
+            effortId = undefined
+          }
           const stream = ctx.llm.stream({
             provider: route.provider,
             model: route.model,
-            reasoningEffort: ReasoningEffortId('off'),
+            ...(effortId !== undefined ? { reasoningEffort: ReasoningEffortId(effortId) } : {}),
             system: buildSystemPrompt(request),
             temperature: 0.3,
             maxTokens: Math.min(2000, request.maxChars * 2 + 200),
@@ -271,6 +290,9 @@ export function apply(ctx: AppContext): void {
           }
           if (typeof (body as { maxChars?: unknown })?.maxChars === 'number') {
             next.maxChars = clampInt((body as { maxChars: number }).maxChars, 50, 1000, DEFAULT_SETTINGS.maxChars)
+          }
+          if (typeof (body as { effort?: unknown })?.effort === 'string') {
+            next.effort = normalizeEffort((body as { effort: string }).effort)
           }
           writeJson(res, 200, saveSettings(next))
           return

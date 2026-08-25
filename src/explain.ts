@@ -18,6 +18,44 @@ export const DEFAULT_MAX_CHARS = 300
 export const MIN_MAX_CHARS = 50
 export const MAX_MAX_CHARS = 1000
 
+/** Reasoning-effort levels exposed by the plugin, weakest → strongest. */
+export const EFFORT_IDS = ['off', 'low', 'medium', 'high', 'max'] as const
+export type EffortId = (typeof EFFORT_IDS)[number]
+export const DEFAULT_EFFORT: EffortId = 'off'
+/** Strength ordering used to clamp a requested level onto what a model declares. */
+export const EFFORT_RANK: Readonly<Record<EffortId, number>> = { off: 0, low: 1, medium: 2, high: 3, max: 4 }
+
+/** Coerce an unknown value into a known effort id; anything else → default. */
+export function normalizeEffort(value: unknown): EffortId {
+  return typeof value === 'string' && (EFFORT_IDS as readonly string[]).includes(value)
+    ? (value as EffortId)
+    : DEFAULT_EFFORT
+}
+
+/**
+ * Pick the effort id actually sent for one resolved model info: honor the
+ * model's declared efforts exactly; otherwise fall back to the closest
+ * declared level not stronger than the request (or the weakest available).
+ * Returns undefined when the model declares no reasoning support — sending
+ * any effort would make dsh-llm reject the call (UNSUPPORTED_REASONING_EFFORT).
+ */
+export function resolveEffortForRoute(
+  info: { reasoning?: { efforts: readonly { id: string }[] } } | undefined,
+  wanted: EffortId,
+): EffortId | undefined {
+  const declared = info?.reasoning?.efforts
+  if (declared === undefined || declared.length === 0) return undefined
+  if (declared.some((e) => e.id === wanted)) return wanted
+  const known = declared.filter((e): e is { id: EffortId } => typeof EFFORT_RANK[e.id as EffortId] === 'number')
+  if (known.length === 0) return undefined
+  const rank = EFFORT_RANK[wanted]
+  const weaker = known.filter((e) => EFFORT_RANK[e.id] <= rank)
+  if (weaker.length > 0) {
+    return weaker.reduce((a, b) => (EFFORT_RANK[a.id] >= EFFORT_RANK[b.id] ? a : b)).id
+  }
+  return known.reduce((a, b) => (EFFORT_RANK[a.id] <= EFFORT_RANK[b.id] ? a : b)).id
+}
+
 /** One provider/model route a harness model call can be dispatched through. */
 export interface ModelRoute {
   provider: string

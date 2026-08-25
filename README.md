@@ -40,8 +40,12 @@ The host half (`src/index.ts`) mounts two routes on the harness `webServer`.
 
 ### `GET | POST /bubble-explain/settings`
 
-- Reads/writes `enabled`, `maxDepth`, `maxChars` to
-  `$DSH_HOME/dsh-bubble-explain.settings.json` (values are clamped on write).
+- Reads/writes `enabled`, `maxDepth`, `maxChars`, `effort` (`off|low|medium|high|max`)
+  to `$DSH_HOME/dsh-bubble-explain.settings.json` (values are clamped on write).
+  At call time the configured effort is matched against the model's declared
+  efforts via `llm.resolveModelInfo`: exact match wins, otherwise it falls back
+  to the closest declared level not stronger than requested; models without
+  reasoning support omit the parameter entirely.
 
 ### Request validation and limits (`src/explain.ts`)
 
@@ -114,6 +118,7 @@ $DSH_HOME/dsh-bubble-explain.settings.json
 | `enabled` | `true`  | Master switch                       |
 | `maxDepth`| `6`     | Max recursion depth (1–6)           |
 | `maxChars`| `300`   | Max explanation length (50–1000)    |
+| `effort`  | `off`   | Reasoning strength (`off/low/medium/high/max`), auto-clamped per model |
 
 ## Development
 

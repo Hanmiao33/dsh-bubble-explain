@@ -31,8 +31,10 @@ streaming Markdown explanation bubble, with recursive follow-up questions.
 
 ### `GET | POST /bubble-explain/settings`
 
-- 读写 `enabled`、`maxDepth`、`maxChars` 到
-  `$DSH_HOME/dsh-bubble-explain.settings.json`（写入时做夹取）。
+- 读写 `enabled`、`maxDepth`、`maxChars`、`effort`（`off|low|medium|high|max`）到
+  `$DSH_HOME/dsh-bubble-explain.settings.json`（写入时做夹取）。调用时通过
+  `llm.resolveModelInfo` 将所配档位与模型实际声明的推理档位比对：精确匹配优先，
+  否则回落到不超过所选强度的最近声明档；模型不支持推理时完全不传该参数。
 
 ### 请求校验与上限（`src/explain.ts`）
 
@@ -101,6 +103,7 @@ $DSH_HOME/dsh-bubble-explain.settings.json
 | `enabled` | `true` | 功能总开关                            |
 | `maxDepth`| `6`    | 最大递归层数（1–6）                    |
 | `maxChars`| `300`  | 解释最大长度（字符数，50–1000）        |
+| `effort`  | `off`  | 思考强度：关闭/低/中/高/最高，按模型声明自动钳制 |
 
 ## 开发
 
