@@ -73,6 +73,15 @@ describe('buildSystemPrompt', () => {
     expect(p).not.toContain('<parent>')
   })
 
+  it('never fences the selection with code-like quotes or classification bait', () => {
+    // Regression: `"""` fences made the model answer "这是一个 python 字符串…"
+    // instead of explaining the selection.
+    const p = buildSystemPrompt(parseExplainRequest({ text: '要解释的东西' }))
+    expect(p).not.toContain('"""')
+    expect(p).toContain('不要判断它的编程语言类型')
+    expect(p).toContain('<选中文字>')
+  })
+
   it('adds recursion context for a follow-up level', () => {
     const req = parseExplainRequest({
       text: 'foo',
@@ -81,8 +90,9 @@ describe('buildSystemPrompt', () => {
     })
     const p = buildSystemPrompt(req)
     expect(p).toContain('第 3 层递归追问')
-    expect(p).toContain('<parent>outer explanation</parent>')
-    expect(p).toContain('"""\nfoo\n"""')
+    expect(p).toContain('<父级解释>outer explanation</父级解释>')
+    expect(p).toContain('<选中文字>\nfoo\n</选中文字>')
+    expect(p).not.toContain('"""')
   })
 })
 
@@ -92,14 +102,15 @@ describe('buildUserMessage', () => {
       parseExplainRequest({ text: 'foo', parent: { text: 'outer', explanation: 'e' } }),
     )
     expect(msg).toContain('外层选中（父级）')
-    expect(msg).toContain('"outer"')
-    expect(msg).toContain('"""\nfoo\n"""')
+    expect(msg).toContain('outer')
+    expect(msg).toContain('<选中文字>\nfoo\n</选中文字>')
+    expect(msg).not.toContain('"""')
   })
 
   it('omits the parent block for top-level requests', () => {
     const msg = buildUserMessage(parseExplainRequest({ text: 'foo' }))
     expect(msg).not.toContain('外层选中')
-    expect(msg).toContain('本次框选的文字')
+    expect(msg).toContain('请解释下面 <选中文字> 标记之间的文字')
   })
 })
 
