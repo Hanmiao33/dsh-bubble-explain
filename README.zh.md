@@ -21,20 +21,32 @@ streaming Markdown explanation bubble, with recursive follow-up questions.
 - 校验同源（`origin` 的 host 与请求 `host` 一致），且只接受 POST。
 - 用 `parseExplainRequest` 校验请求体（限制见下表）。功能关闭时返回 `403`，
   请求体/方法错误返回 `400`/`405`，路由解析失败返回 `500`。
-- 调用时用 `resolveModelRoute` 解析 provider/model 路由：默认模型选择 →
-  最近一次主对话路由（经 `ctx.on('llm/stream', ...)` 捕获）→ 第一个已注册
-  provider（兜底 `deepseek-chat`）。
-- 以 `reasoningEffort: "off"`、`temperature: 0.3`、
-  `maxTokens: min(2000, maxChars * 2 + 200)`，配合组装的 system/user 提示进行流式调用。
+- 调用时用 `resolveModelRoute(ctx, lastRoute, override)` 解析 provider/model 路由，
+  优先级：设置页配置的独立模型（`override`，仅当其 provider 仍注册时才生效）→
+  默认模型选择 → 最近一次主对话路由（经 `ctx.on('llm/stream', ...)` 捕获）→
+  第一个已注册 provider（兜底 `deepseek-chat`）。
+- 以 `temperature: 0.3`、`maxTokens: min(2000, maxChars * 2 + 200)`，配合组装的
+  system/user 提示进行流式调用；`reasoningEffort` 按设置的思考强度与模型实际声明的
+  推理档位比对后决定是否传（见下）。
 - 输出 SSE 事件 `data: {"t": "<文本增量>"}`，结束后发送
   `data: {"done": true}`；中途出错则发送 `data: {"error": ...}`。
 
 ### `GET | POST /bubble-explain/settings`
 
-- 读写 `enabled`、`maxDepth`、`maxChars`、`effort`（`off|low|medium|high|max`）到
-  `$DSH_HOME/dsh-bubble-explain.settings.json`（写入时做夹取）。调用时通过
-  `llm.resolveModelInfo` 将所配档位与模型实际声明的推理档位比对：精确匹配优先，
-  否则回落到不超过所选强度的最近声明档；模型不支持推理时完全不传该参数。
+- 读写 `enabled`、`maxDepth`、`maxChars`、`effort`（`off|low|medium|high|max`）、
+  `provider`、`model` 到 `$DSH_HOME/dsh-bubble-explain.settings.json`（写入时做夹取）。
+  调用时通过 `llm.resolveModelInfo` 将所配档位与模型实际声明的推理档位比对：精确匹配
+  优先，否则回落到不超过所选强度的最近声明档；模型不支持推理时完全不传该参数。
+- `provider`/`model` 为独立模型配置：两者都为空时跟随对话默认模型；只填一半不会被
+  持久化，provider 已不存在时也会被忽略（不会让解释功能整体失败）。
+- 响应额外返回 `effective`（`{provider, model}` 或 `null`）与 `effectiveError`
+  （解析失败原因或 `null`），便于界面显示当前真实生效的路由。
+
+### `GET /bubble-explain/models`
+
+- 返回可用模型目录：`{ providers: [{id, name}], models: { [providerId]: [{id, name}] } }`，
+  供设置页的「模型来源」「解释所用模型」两个下拉框使用。逐个 provider 调
+  `llm.listModels(id)`，单个 provider 失败时该键为空数组，不影响其余项。
 
 ### 请求校验与上限（`src/explain.ts`）
 
@@ -104,6 +116,8 @@ $DSH_HOME/dsh-bubble-explain.settings.json
 | `maxDepth`| `6`    | 最大递归层数（1–6）                    |
 | `maxChars`| `300`  | 解释最大长度（字符数，50–1000）        |
 | `effort`  | `off`  | 思考强度：关闭/低/中/高/最高，按模型声明自动钳制 |
+| `provider`| 空     | 独立模型配置的 provider（空 = 跟随对话默认模型） |
+| `model`   | 空     | 独立模型配置的模型 id（与 `provider` 成对生效） |
 
 ## 开发
 

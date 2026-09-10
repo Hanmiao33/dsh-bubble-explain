@@ -18,6 +18,7 @@ export const inject = ['slots']
 
 const EXPLAIN_ROUTE = '/bubble-explain/stream'
 const SETTINGS_ROUTE = '/bubble-explain/settings'
+const MODELS_ROUTE = '/bubble-explain/models'
 
 const MIN_CHARS = 2
 const MAX_TEXT_CHARS = 4000
@@ -31,9 +32,30 @@ interface PluginSettings {
   maxChars: number
   /** Requested model reasoning strength ('off'|'low'|'medium'|'high'|'max'). */
   effort: string
+  /** Independent model route; empty = follow the conversation's default model. */
+  provider: string
+  model: string
 }
 
-const DEFAULT_SETTINGS: PluginSettings = { enabled: true, maxDepth: 6, maxChars: 300, effort: 'off' }
+const DEFAULT_SETTINGS: PluginSettings = {
+  enabled: true,
+  maxDepth: 6,
+  maxChars: 300,
+  effort: 'off',
+  provider: '',
+  model: '',
+}
+
+/** One selectable provider/model entry from GET /bubble-explain/models. */
+interface ModelOption {
+  id: string
+  name: string
+}
+
+interface ModelDirectory {
+  providers: ModelOption[]
+  models: Record<string, ModelOption[]>
+}
 
 /** Reasoning-effort options shown in settings; values mirror the host whitelist. */
 const EFFORT_OPTIONS = [
@@ -193,6 +215,9 @@ const CSS = `
 .bbl-set-row input[type="number"]{width:96px;padding:4px 6px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:6px;background:var(--dsw-alias-bg-base,#1f2329);color:var(--dsw-alias-label-primary,inherit);font-size:13px}
 .bbl-set-row select{padding:4px 6px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:6px;background:var(--dsw-alias-bg-base,#1f2329);color:var(--dsw-alias-label-primary,inherit);font-size:13px;cursor:pointer}
 .bbl-set-row input[type="checkbox"]{width:16px;height:16px;accent-color:var(--dsw-alias-state-business-primary,#6a9bff);cursor:pointer}
+.bbl-set-sub{margin-top:6px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary,inherit)}
+.bbl-set-note{margin:0;font-size:11.5px;line-height:1.6;color:var(--dsw-alias-label-caption,#8a919c);word-break:break-all}
+.bbl-set-row select{max-width:min(260px,60vw);text-overflow:ellipsis}
 @media (max-width:720px){.bbl{width:calc(100vw - 16px)}}
 `
 
@@ -243,6 +268,8 @@ class BubbleOverlay {
         if (typeof data.maxDepth === 'number') s.maxDepth = Math.min(MAX_DEPTH, Math.max(1, Math.round(data.maxDepth)))
         if (typeof data.maxChars === 'number') s.maxChars = Math.min(1000, Math.max(50, Math.round(data.maxChars)))
         if (isEffortId(data.effort)) s.effort = data.effort
+        if (typeof data.provider === 'string') s.provider = data.provider
+        if (typeof data.model === 'string') s.model = data.model
         this.settings = s
       })
       .catch(() => undefined)
@@ -568,6 +595,34 @@ interface RuntimeState {
 
 const state: RuntimeState = { settings: { ...DEFAULT_SETTINGS }, overlay: null, subscribers: new Set() }
 
+/** Provider/model directory backing the 独立模型配置 picker. */
+const modelState: {
+  directory: ModelDirectory
+  loaded: boolean
+  error: string
+  /** The route the host reports it will actually call. */
+  effective: { provider: string; model: string } | null
+} = { directory: { providers: [], models: {} }, loaded: false, error: '', effective: null }
+
+function loadModels(): void {
+  void fetch(MODELS_ROUTE, { credentials: 'same-origin' })
+    .then((r) => (r.ok ? r.json() : null))
+    .then((data: ModelDirectory | null) => {
+      if (data === null) return
+      modelState.directory = {
+        providers: Array.isArray(data.providers) ? data.providers : [],
+        models: data.models !== null && typeof data.models === 'object' ? data.models : {},
+      }
+      modelState.loaded = true
+      modelState.error = ''
+      notify()
+    })
+    .catch(() => {
+      modelState.error = '无法读取模型列表'
+      notify()
+    })
+}
+
 function notify(): void {
   for (const sub of [...state.subscribers]) {
     try { sub() } catch { /* ignore */ }
@@ -595,11 +650,18 @@ function refreshSettings(): void {
     .then((r) => (r.ok ? r.json() : null))
     .then((data: Partial<PluginSettings> | null) => {
       if (data === null) return
+      const eff = (data as { effective?: { provider?: string; model?: string } | null }).effective
+      modelState.effective =
+        eff !== null && eff !== undefined && typeof eff.provider === 'string' && typeof eff.model === 'string'
+          ? { provider: eff.provider, model: eff.model }
+          : null
       applySettings({
         enabled: typeof data.enabled === 'boolean' ? data.enabled : state.settings.enabled,
         maxDepth: typeof data.maxDepth === 'number' ? data.maxDepth : state.settings.maxDepth,
         maxChars: typeof data.maxChars === 'number' ? data.maxChars : state.settings.maxChars,
         effort: isEffortId(data.effort) ? data.effort : state.settings.effort,
+        provider: typeof data.provider === 'string' ? data.provider : state.settings.provider,
+        model: typeof data.model === 'string' ? data.model : state.settings.model,
       })
     })
     .catch(() => undefined)
@@ -625,11 +687,58 @@ function SettingsPage(): React.ReactNode {
   React.useEffect(() => {
     const sub = () => force((v) => v + 1)
     state.subscribers.add(sub)
+    refreshSettings()
+    loadModels()
     return () => { state.subscribers.delete(sub) }
   }, [])
   const row = (label: string, control: React.ReactNode): React.ReactNode =>
     React.createElement('div', { className: 'bbl-set-row' },
       React.createElement('span', { className: 'bbl-set-label' }, label), control)
+
+  const followDefault = settings.provider.length === 0 || settings.model.length === 0
+  const providers = modelState.directory.providers
+  const providerModels = settings.provider.length > 0 ? modelState.directory.models[settings.provider] ?? [] : []
+
+  const modelRows: React.ReactNode[] = [
+    row('模型来源',
+      React.createElement('select',
+        {
+          value: followDefault ? '' : settings.provider,
+          onChange: (ev: React.ChangeEvent<HTMLSelectElement>) => {
+            const value = ev.target.value
+            if (value === '') submitSettings({ provider: '', model: '' })
+            else {
+              // Default to the provider's first advertised model so the pair is
+              // always complete.
+              const first = modelState.directory.models[value]?.[0]?.id ?? ''
+              submitSettings({ provider: value, model: first })
+            }
+          },
+        },
+        React.createElement('option', { key: '__default', value: '' }, '跟随对话默认模型'),
+        providers.map((provider) =>
+          React.createElement('option', { key: provider.id, value: provider.id }, provider.name)),
+      )),
+  ]
+
+  if (!followDefault) {
+    modelRows.push(row('解释所用模型',
+      React.createElement('select',
+        {
+          value: settings.model,
+          onChange: (ev: React.ChangeEvent<HTMLSelectElement>) => submitSettings({ model: ev.target.value }),
+        },
+        providerModels.length === 0
+          ? [React.createElement('option', { key: settings.model, value: settings.model }, settings.model || '（该 provider 未声明模型）')]
+          : providerModels.map((entry) =>
+              React.createElement('option', { key: entry.id, value: entry.id }, entry.name === entry.id ? entry.id : `${entry.name}（${entry.id}）`)),
+      )))
+  }
+
+  const effectiveLine = modelState.effective === null
+    ? '当前无法解析可用模型。'
+    : `当前实际调用：${modelState.effective.provider} / ${modelState.effective.model}`
+
   return React.createElement('div', { className: 'bbl-settings' },
     React.createElement('p', { style: { fontSize: 12, color: 'var(--dsw-alias-label-secondary,#8a8f98)', lineHeight: 1.7, margin: '0 0 4px' } },
       '在对话中框选任意文字后，点击出现的「✨ 解释」按钮弹出气泡，Markdown 实时流式解释，支持递归追问。设置即时生效。「思考强度」控制解释模型的推理力度：档位越高回答越深入但更慢；模型不支持所选档位时自动落到不超过它的最近可用档。'),
@@ -657,6 +766,10 @@ function SettingsPage(): React.ReactNode {
         EFFORT_OPTIONS.map((option) =>
           React.createElement('option', { key: option.value, value: option.value }, option.label))),
     ),
+    React.createElement('div', { className: 'bbl-set-sub' }, '独立模型配置'),
+    ...modelRows,
+    React.createElement('p', { className: 'bbl-set-note' },
+      `${effectiveLine}${modelState.error.length > 0 ? ` · ${modelState.error}` : ''}`),
   )
 }
 

@@ -8,8 +8,11 @@
  *    provider); the reasoning effort comes from persisted settings and is
  *    clamped onto what the resolved model actually declares.
  *  - GET/POST /bubble-explain/settings → read/write the plugin's persisted
- *    preferences (enabled / maxDepth / maxChars) to $DSH_HOME/envir … a JSON
- *    file so choices survive restarts.
+ *    preferences (enabled / maxDepth / maxChars / effort / provider / model) to
+ *    a JSON file so choices survive restarts. GET also reports the route that
+ *    will actually be used.
+ *  - GET /bubble-explain/models → the live provider list plus each provider's
+ *    advertised models, feeding the independent-model-configuration picker.
  * @module dsh-bubble-explain
  */
 import type { Context } from '@deepseek-ai/cordis';
@@ -34,6 +37,10 @@ export interface PersistedSettings {
     maxChars: number;
     /** Requested model reasoning strength; clamped per model at call time. */
     effort: EffortId;
+    /** Independent model route (独立模型配置). Empty strings = follow the
+     * conversation's default model. */
+    provider: string;
+    model: string;
 }
 export declare function apply(ctx: AppContext): void;
 export {};

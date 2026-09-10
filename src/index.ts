@@ -8,8 +8,11 @@
  *    provider); the reasoning effort comes from persisted settings and is
  *    clamped onto what the resolved model actually declares.
  *  - GET/POST /bubble-explain/settings → read/write the plugin's persisted
- *    preferences (enabled / maxDepth / maxChars) to $DSH_HOME/envir … a JSON
- *    file so choices survive restarts.
+ *    preferences (enabled / maxDepth / maxChars / effort / provider / model) to
+ *    a JSON file so choices survive restarts. GET also reports the route that
+ *    will actually be used.
+ *  - GET /bubble-explain/models → the live provider list plus each provider's
+ *    advertised models, feeding the independent-model-configuration picker.
  * @module dsh-bubble-explain
  */
 
@@ -26,6 +29,8 @@ import {
   MAX_DEPTH,
   buildSystemPrompt,
   buildUserMessage,
+  isUsableRoute,
+  liveProviderIds,
   normalizeEffort,
   parseExplainRequest,
   resolveEffortForRoute,
@@ -55,6 +60,10 @@ export interface PersistedSettings {
   maxChars: number
   /** Requested model reasoning strength; clamped per model at call time. */
   effort: EffortId
+  /** Independent model route (独立模型配置). Empty strings = follow the
+   * conversation's default model. */
+  provider: string
+  model: string
 }
 
 const DEFAULT_SETTINGS: PersistedSettings = {
@@ -62,6 +71,8 @@ const DEFAULT_SETTINGS: PersistedSettings = {
   maxDepth: MAX_DEPTH,
   maxChars: DEFAULT_MAX_CHARS,
   effort: DEFAULT_EFFORT,
+  provider: '',
+  model: '',
 }
 
 const DSH_HOME = process.env.DSH_HOME || join(os.homedir(), '.dsh')
@@ -75,6 +86,8 @@ function loadSettings(): PersistedSettings {
       maxDepth: clampInt(raw.maxDepth, 1, MAX_DEPTH, DEFAULT_SETTINGS.maxDepth),
       maxChars: clampInt(raw.maxChars, 50, 1000, DEFAULT_SETTINGS.maxChars),
       effort: normalizeEffort(raw.effort),
+      provider: typeof raw.provider === 'string' ? raw.provider.trim() : DEFAULT_SETTINGS.provider,
+      model: typeof raw.model === 'string' ? raw.model.trim() : DEFAULT_SETTINGS.model,
     }
   } catch {
     return { ...DEFAULT_SETTINGS }
@@ -87,6 +100,13 @@ function saveSettings(next: PersistedSettings): PersistedSettings {
     maxDepth: clampInt(next.maxDepth, 1, MAX_DEPTH, DEFAULT_SETTINGS.maxDepth),
     maxChars: clampInt(next.maxChars, 50, 1000, DEFAULT_SETTINGS.maxChars),
     effort: normalizeEffort(next.effort),
+    provider: typeof next.provider === 'string' ? next.provider.trim() : DEFAULT_SETTINGS.provider,
+    model: typeof next.model === 'string' ? next.model.trim() : DEFAULT_SETTINGS.model,
+  }
+  // A partial override is never persisted as-is: both halves or neither.
+  if (merged.provider.length === 0 || merged.model.length === 0) {
+    merged.provider = ''
+    merged.model = ''
   }
   try {
     mkdirSync(join(DSH_HOME), { recursive: true })
@@ -98,6 +118,16 @@ function saveSettings(next: PersistedSettings): PersistedSettings {
 function clampInt(value: unknown, min: number, max: number, fallback: number): number {
   if (typeof value !== 'number' || !Number.isFinite(value)) return fallback
   return Math.min(max, Math.max(min, Math.round(value)))
+}
+
+/** The plugin-level model override, or undefined when it should follow the
+ * conversation default. A configured provider that has since disappeared is
+ * reported once per call so the user can see why the choice is not in effect. */
+function overrideFrom(settings: PersistedSettings, ctx: AppContext): ModelRoute | undefined {
+  if (settings.provider.length === 0 || settings.model.length === 0) return undefined
+  const route = { provider: settings.provider, model: settings.model }
+  if (!isUsableRoute(route) || !liveProviderIds(ctx).includes(route.provider)) return undefined
+  return route
 }
 
 /** Same-origin fence mirroring neighbouring bundle plugins. */
@@ -189,7 +219,7 @@ export function apply(ctx: AppContext): void {
 
         let route: ModelRoute
         try {
-          route = resolveModelRoute(ctx, lastRoute)
+          route = resolveModelRoute(ctx, lastRoute, overrideFrom(settings, ctx))
         } catch (error) {
           writeJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) })
           return
@@ -270,7 +300,20 @@ export function apply(ctx: AppContext): void {
         }
         const method = (req.method ?? '').toUpperCase()
         if (method === 'GET') {
-          writeJson(res, 200, loadSettings())
+          // Report what will actually be used, so the settings page can show a
+          // stale override instead of silently ignoring it.
+          let effective: ModelRoute | null = null
+          let effectiveError: string | null = null
+          try {
+            effective = resolveModelRoute(ctx, lastRoute, overrideFrom(loadSettings(), ctx))
+          } catch (error) {
+            effectiveError = error instanceof Error ? error.message : String(error)
+          }
+          writeJson(res, 200, {
+            ...loadSettings(),
+            effective: effective === null ? null : { provider: effective.provider, model: effective.model },
+            effectiveError,
+          })
           return
         }
         if (method === 'POST' || method === 'PUT') {
@@ -294,6 +337,16 @@ export function apply(ctx: AppContext): void {
           if (typeof (body as { effort?: unknown })?.effort === 'string') {
             next.effort = normalizeEffort((body as { effort: string }).effort)
           }
+          // Independent model route: both halves together, validated against
+          // what the llm service actually has registered right now.
+          const bodyProvider = (body as { provider?: unknown })?.provider
+          const bodyModel = (body as { model?: unknown })?.model
+          if (typeof bodyProvider === 'string') next.provider = bodyProvider.trim()
+          if (typeof bodyModel === 'string') next.model = bodyModel.trim()
+          if (next.provider.length > 0 && next.model.length > 0 && !liveProviderIds(ctx).includes(next.provider)) {
+            next.provider = ''
+            next.model = ''
+          }
           writeJson(res, 200, saveSettings(next))
           return
         }
@@ -305,6 +358,41 @@ export function apply(ctx: AppContext): void {
       })
     },
   }), '@dsh-external/bubble-explain: /settings route')
+
+  // Model directory for the independent-model-configuration picker: every live
+  // provider plus the models each one actually advertises.
+  ctx.effect(() => ctx.webServer.register({
+    kind: 'prefix',
+    path: '/bubble-explain/models',
+    handler: (req, res) => {
+      void (async () => {
+        if (!isTrusted(req, ctx)) {
+          writeJson(res, 403, { ok: false, error: 'forbidden' })
+          return
+        }
+        if ((req.method ?? '').toUpperCase() !== 'GET') {
+          writeJson(res, 405, { ok: false, error: 'method not allowed' })
+          return
+        }
+        const providers: { id: string; name: string }[] = []
+        const models: Record<string, { id: string; name: string }[]> = {}
+        for (const provider of ctx.llm.listProviders() ?? []) {
+          providers.push({ id: provider.id, name: provider.name ?? provider.id })
+          try {
+            const list = await ctx.llm.listModels(provider.id)
+            models[provider.id] = (list ?? []).map((entry) => ({ id: entry.id, name: entry.name ?? entry.id }))
+          } catch {
+            models[provider.id] = []
+          }
+        }
+        writeJson(res, 200, { providers, models })
+      })().catch((error) => {
+        try {
+          writeJson(res, 500, { ok: false, error: String((error && error.message) || error) })
+        } catch { /* headers already sent */ }
+      })
+    },
+  }), '@dsh-external/bubble-explain: /models route')
 
   ctx.logger?.info?.('[' + name + '] mounted: /bubble-explain/stream + /bubble-explain/settings')
 }

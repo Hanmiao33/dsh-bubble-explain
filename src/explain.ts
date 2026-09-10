@@ -149,9 +149,41 @@ export function buildUserMessage(req: ExplainRequest): string {
   return lines.join('\n')
 }
 
-/** Resolve a live provider/model route: agent default selection first, then
- * the last observed main-loop route, then the first registered provider. */
-export function resolveModelRoute(ctx: Context, lastRoute?: ModelRoute | undefined): ModelRoute {
+/** True when both halves of a route are non-empty strings. */
+export function isUsableRoute(route: { provider?: unknown; model?: unknown } | undefined): route is ModelRoute {
+  return (
+    route !== undefined &&
+    typeof route.provider === 'string' &&
+    route.provider.length > 0 &&
+    typeof route.model === 'string' &&
+    route.model.length > 0
+  )
+}
+
+/** Ids of every provider the llm service currently has registered. */
+export function liveProviderIds(ctx: Context): string[] {
+  try {
+    return (ctx.llm.listProviders() ?? []).map((provider) => provider.id)
+  } catch {
+    return []
+  }
+}
+
+/** Resolve a live provider/model route: an explicit plugin-level override
+ * first (独立模型配置), then the agent default selection, then the last
+ * observed main-loop route, then the first registered provider.
+ *
+ * The override is only honoured while its provider is still registered, so a
+ * removed or renamed provider degrades to the conversation default instead of
+ * failing every explanation call. */
+export function resolveModelRoute(
+  ctx: Context,
+  lastRoute?: ModelRoute | undefined,
+  override?: ModelRoute | undefined,
+): ModelRoute {
+  if (isUsableRoute(override) && liveProviderIds(ctx).includes(override.provider)) {
+    return { provider: override.provider, model: override.model }
+  }
   const adm = ctx.get('agentDefaultModel') as
     | { currentSelection?: () => { provider?: string; model?: string } }
     | undefined

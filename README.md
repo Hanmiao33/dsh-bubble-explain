@@ -28,24 +28,41 @@ The host half (`src/index.ts`) mounts two routes on the harness `webServer`.
 - Validates the body with `parseExplainRequest` (limits below). Returns `403`
   if the feature is disabled, `400`/`405` on a bad body/method, `500` on route
   resolution failure.
-- Resolves the provider/model route at call time with `resolveModelRoute`:
-  agent default selection → last observed main-loop route → first registered
-  provider (falls back to `deepseek-chat`). The main-loop route is captured via
-  `ctx.on('llm/stream', ...)`.
-- Streams with `reasoningEffort: "off"`, `temperature: 0.3`,
-  `maxTokens: min(2000, maxChars * 2 + 200)`, and the assembled system/user
-  prompts.
+- Resolves the provider/model route at call time with
+  `resolveModelRoute(ctx, lastRoute, override)`, in priority order: the
+  independent model configured in settings (`override`, honored only while its
+  provider is still registered) → agent default selection → last observed
+  main-loop route → first registered provider (falls back to `deepseek-chat`).
+  The main-loop route is captured via `ctx.on('llm/stream', ...)`.
+- Streams with `temperature: 0.3`, `maxTokens: min(2000, maxChars * 2 + 200)`,
+  and the assembled system/user prompts; `reasoningEffort` is sent only when the
+  configured effort survives the comparison against the model's declared
+  efforts (see below).
 - Emits SSE events `data: {"t": "<text delta>"}` and then
   `data: {"done": true}`; an error mid-stream sends `data: {"error": ...}`.
 
 ### `GET | POST /bubble-explain/settings`
 
-- Reads/writes `enabled`, `maxDepth`, `maxChars`, `effort` (`off|low|medium|high|max`)
-  to `$DSH_HOME/dsh-bubble-explain.settings.json` (values are clamped on write).
-  At call time the configured effort is matched against the model's declared
-  efforts via `llm.resolveModelInfo`: exact match wins, otherwise it falls back
-  to the closest declared level not stronger than requested; models without
-  reasoning support omit the parameter entirely.
+- Reads/writes `enabled`, `maxDepth`, `maxChars`, `effort` (`off|low|medium|high|max`),
+  `provider` and `model` to `$DSH_HOME/dsh-bubble-explain.settings.json` (values
+  are clamped on write). At call time the configured effort is matched against
+  the model's declared efforts via `llm.resolveModelInfo`: exact match wins,
+  otherwise it falls back to the closest declared level not stronger than
+  requested; models without reasoning support omit the parameter entirely.
+- `provider`/`model` are the independent model configuration: both empty means
+  follow the conversation's default model. A half-filled pair is never
+  persisted, and an override whose provider no longer exists is ignored rather
+  than failing every explanation.
+- The response also carries `effective` (`{provider, model}` or `null`) and
+  `effectiveError` (reason or `null`) so the UI can show the route actually in use.
+
+### `GET /bubble-explain/models`
+
+- Returns the available model directory:
+  `{ providers: [{id, name}], models: { [providerId]: [{id, name}] } }`, used by
+  the settings page's "model source" and "explanation model" dropdowns. Each
+  provider is queried with `llm.listModels(id)`; a provider that fails yields an
+  empty array without affecting the others.
 
 ### Request validation and limits (`src/explain.ts`)
 
@@ -119,6 +136,8 @@ $DSH_HOME/dsh-bubble-explain.settings.json
 | `maxDepth`| `6`     | Max recursion depth (1–6)           |
 | `maxChars`| `300`   | Max explanation length (50–1000)    |
 | `effort`  | `off`   | Reasoning strength (`off/low/medium/high/max`), auto-clamped per model |
+| `provider`| `""`    | Independent model: provider id (empty = follow the conversation default) |
+| `model`   | `""`    | Independent model: model id (takes effect together with `provider`)  |
 
 ## Development
 

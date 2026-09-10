@@ -3,6 +3,8 @@ import {
   buildSystemPrompt,
   buildUserMessage,
   DEFAULT_MAX_CHARS,
+  isUsableRoute,
+  liveProviderIds,
   MAX_DEPTH,
   MAX_MAX_CHARS,
   MAX_PARENT_CHARS,
@@ -111,6 +113,67 @@ describe('buildUserMessage', () => {
     const msg = buildUserMessage(parseExplainRequest({ text: 'foo' }))
     expect(msg).not.toContain('外层选中')
     expect(msg).toContain('请解释下面 <选中文字> 标记之间的文字')
+  })
+})
+
+describe('resolveModelRoute — independent model configuration', () => {
+  function makeCtx(providers: { id: string }[] = [], selection?: unknown) {
+    return {
+      get: (key: string) => (key === 'agentDefaultModel' ? { currentSelection: () => selection } : undefined),
+      llm: { listProviders: () => providers },
+    } as unknown as Context
+  }
+
+  it('prefers an explicit override over the agent default selection', () => {
+    const ctx = makeCtx([{ id: 'p-custom' }, { id: 'p-default' }], { provider: 'p-default', model: 'm-default' })
+    expect(resolveModelRoute(ctx, undefined, { provider: 'p-custom', model: 'm-custom' })).toEqual({
+      provider: 'p-custom',
+      model: 'm-custom',
+    })
+  })
+
+  it('ignores an override whose provider is no longer registered', () => {
+    const ctx = makeCtx([{ id: 'p-default' }], { provider: 'p-default', model: 'm-default' })
+    expect(resolveModelRoute(ctx, undefined, { provider: 'p-gone', model: 'm-custom' })).toEqual({
+      provider: 'p-default',
+      model: 'm-default',
+    })
+  })
+
+  it('ignores a half-configured override', () => {
+    const ctx = makeCtx([{ id: 'p-custom' }], { provider: 'p-default', model: 'm-default' })
+    expect(resolveModelRoute(ctx, undefined, { provider: 'p-custom', model: '' })).toEqual({
+      provider: 'p-default',
+      model: 'm-default',
+    })
+  })
+
+  it('falls back to the captured main-loop route when there is no override or selection', () => {
+    const ctx = makeCtx([{ id: 'p-first' }])
+    expect(resolveModelRoute(ctx, { provider: 'p-main', model: 'm-main' }, undefined)).toEqual({
+      provider: 'p-main',
+      model: 'm-main',
+    })
+  })
+})
+
+describe('isUsableRoute / liveProviderIds', () => {
+  it('accepts only routes with both halves non-empty', () => {
+    expect(isUsableRoute({ provider: 'p', model: 'm' })).toBe(true)
+    expect(isUsableRoute({ provider: 'p', model: '' })).toBe(false)
+    expect(isUsableRoute({ provider: '', model: 'm' })).toBe(false)
+    expect(isUsableRoute(undefined)).toBe(false)
+  })
+
+  it('degrades to an empty list when the llm service throws', () => {
+    const ctx = {
+      llm: {
+        listProviders: () => {
+          throw new Error('boom')
+        },
+      },
+    } as unknown as Context
+    expect(liveProviderIds(ctx)).toEqual([])
   })
 })
 
