@@ -119,6 +119,48 @@ $DSH_HOME/dsh-bubble-explain.settings.json
 | `provider`| 空     | 独立模型配置的 provider（空 = 跟随对话默认模型） |
 | `model`   | 空     | 独立模型配置的模型 id（与 `provider` 成对生效） |
 
+## 故障排查
+
+### 走 opencode / opencode-go 系 provider 时报 400 MissingSessionID
+
+```
+400: {"type":"MissingSessionID","message":"Error from provider (Console Go):
+Request is missing x-opencode-session and cannot be routed efficiently. ..."}
+```
+
+这不是插件的问题，而是该 provider 的网关要求每个请求带 `x-opencode-session`
+请求头（仅作路由/亲和性标识，任意非空值均可，无需预先注册会话）。DeepSeek
+Harness 默认不发这个头，因此任何经由该网关的调用都会被拒。
+
+DSH 的 `dsh-llm-pi-ai` 适配器支持按 provider 配置自定义请求头，在
+`$DSH_HOME/settings.yaml` 里给每个走该网关的 provider 加上即可：
+
+```yaml
+llm-pi-ai:
+  providers:
+    opencodego:
+      apiKeyEnv: OPENCODEGO_API_KEY
+      api: openai-responses
+      baseURL: https://opencode.ai/zen/go/v1
+      headers:
+        x-opencode-session: dsh-web-session
+    opencode-go:
+      apiKeyEnv: OPENCODE_GO_API_KEY
+      headers:
+        x-opencode-session: dsh-web-session
+```
+
+注意 `opencodego` 与 `opencode-go` 是**两个独立的 provider 条目**（前者显式声明
+`baseURL`，后者用内置目录），但指向同一网关，**两个都要加**，只加一个仍会报错。
+改完后无需重启，配置在下一次请求即生效。
+
+若不想动 provider 配置，也可在插件设置里把「模型来源」换成不经该网关的
+provider（例如 `deepseek-official`）。
+
+> 附带说明：同一网关在思考模式下还会要求把 reasoning 内容回传
+> （`The reasoning_text in the thinking mode must be passed back to the API.`），
+> 属于同一网关的相邻约束，补齐请求头是走通该链路的前提。
+
 ## 开发
 
 本插件是 DSH profile bundle（`package.json` 中的 `dsh.bundle`，patch 在

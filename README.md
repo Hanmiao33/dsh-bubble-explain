@@ -139,6 +139,52 @@ $DSH_HOME/dsh-bubble-explain.settings.json
 | `provider`| `""`    | Independent model: provider id (empty = follow the conversation default) |
 | `model`   | `""`    | Independent model: model id (takes effect together with `provider`)  |
 
+## Troubleshooting
+
+### 400 MissingSessionID when using an opencode / opencode-go provider
+
+```
+400: {"type":"MissingSessionID","message":"Error from provider (Console Go):
+Request is missing x-opencode-session and cannot be routed efficiently. ..."}
+```
+
+This is not a plugin defect: that provider's gateway requires an
+`x-opencode-session` request header on every call (a routing/affinity marker —
+any non-empty value works, no session registration needed). DeepSeek Harness
+does not send it by default, so any request through that gateway is rejected.
+
+The `dsh-llm-pi-ai` adapter supports per-provider custom headers, so declare
+them in `$DSH_HOME/settings.yaml` for each provider that uses that gateway:
+
+```yaml
+llm-pi-ai:
+  providers:
+    opencodego:
+      apiKeyEnv: OPENCODEGO_API_KEY
+      api: openai-responses
+      baseURL: https://opencode.ai/zen/go/v1
+      headers:
+        x-opencode-session: dsh-web-session
+    opencode-go:
+      apiKeyEnv: OPENCODE_GO_API_KEY
+      headers:
+        x-opencode-session: dsh-web-session
+```
+
+Note that `opencodego` and `opencode-go` are **two separate provider entries**
+(the former declares an explicit `baseURL`, the latter uses a built-in catalog)
+that resolve to the same gateway — **both need the header**; adding only one
+still fails. No restart is required; the next request picks it up.
+
+If you would rather not touch provider config, switch **model source** in the
+plugin settings to a provider that does not use that gateway (for example
+`deepseek-official`).
+
+> Related: the same gateway also requires reasoning content to be passed back in
+> thinking mode (`The reasoning_text in the thinking mode must be passed back to
+> the API.`). It is an adjacent constraint of the same gateway, and supplying
+> the request header is a prerequisite for that path to work at all.
+
 ## Development
 
 The plugin is a DSH profile bundle (`dsh.bundle` in `package.json`, patch at
