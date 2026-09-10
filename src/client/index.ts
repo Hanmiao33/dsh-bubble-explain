@@ -58,6 +58,74 @@ interface ModelDirectory {
 }
 
 /** Reasoning-effort options shown in settings; values mirror the host whitelist. */
+interface SelectOption {
+  value: string
+  label: string
+}
+
+/**
+ * Dropdown rendered in the page instead of a native <select>.
+ *
+ * Native selects are unusable for model ids: the OS draws the popup with its own
+ * chrome, ignores our typography, and the control itself gets squeezed in the
+ * settings row, so the candidates end up cramped and unreadable. This renders
+ * both the trigger and the option list ourselves.
+ */
+function Dropdown(props: {
+  value: string
+  options: SelectOption[]
+  disabled?: boolean
+  onChange: (value: string) => void
+}): React.ReactElement {
+  const [open, setOpen] = React.useState(false)
+  const current = props.options.find((option) => option.value === props.value)
+  const ref = React.useRef<HTMLDivElement | null>(null)
+
+  React.useEffect(() => {
+    if (!open) return
+    const onDocDown = (ev: MouseEvent): void => {
+      if (ref.current !== null && !ref.current.contains(ev.target as Node)) setOpen(false)
+    }
+    const onKey = (ev: KeyboardEvent): void => {
+      if (ev.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDocDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  return React.createElement('div', { className: 'bbl-dd', ref },
+    React.createElement('button', {
+      type: 'button',
+      className: `bbl-dd-trigger${open ? ' bbl-dd-trigger-open' : ''}`,
+      disabled: props.disabled === true,
+      onClick: () => setOpen((prev: boolean) => !prev),
+      title: current?.label ?? props.value,
+    },
+      React.createElement('span', { className: 'bbl-dd-label' }, current?.label ?? props.value),
+      React.createElement('span', { className: 'bbl-dd-chevron' }, '\u25be')),
+    open
+      ? React.createElement('div', { className: 'bbl-dd-menu', role: 'listbox' },
+          props.options.map((option) =>
+            React.createElement('button', {
+              key: option.value,
+              type: 'button',
+              role: 'option',
+              'aria-selected': option.value === props.value,
+              className: `bbl-dd-option${option.value === props.value ? ' bbl-dd-option-active' : ''}`,
+              title: option.label,
+              onClick: () => {
+                setOpen(false)
+                props.onChange(option.value)
+              },
+            }, option.label)))
+      : null,
+  )
+}
+
 const EFFORT_OPTIONS = [
   { value: 'off', label: '关闭（最快）' },
   { value: 'low', label: '低' },
@@ -213,11 +281,20 @@ const CSS = `
 .bbl-set-row{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .bbl-set-label{font-size:13px;color:var(--dsw-alias-label-primary,inherit)}
 .bbl-set-row input[type="number"]{width:96px;padding:4px 6px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:6px;background:var(--dsw-alias-bg-base,#1f2329);color:var(--dsw-alias-label-primary,inherit);font-size:13px}
-.bbl-set-row select{padding:4px 6px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:6px;background:var(--dsw-alias-bg-base,#1f2329);color:var(--dsw-alias-label-primary,inherit);font-size:13px;cursor:pointer}
 .bbl-set-row input[type="checkbox"]{width:16px;height:16px;accent-color:var(--dsw-alias-state-business-primary,#6a9bff);cursor:pointer}
 .bbl-set-sub{margin-top:6px;padding-top:10px;border-top:1px solid var(--dsw-alias-border-l1,rgba(255,255,255,.08));font-size:12px;font-weight:600;color:var(--dsw-alias-label-primary,inherit)}
 .bbl-set-note{margin:0;font-size:11.5px;line-height:1.6;color:var(--dsw-alias-label-caption,#8a919c);word-break:break-all}
-.bbl-set-row select{max-width:min(260px,60vw);text-overflow:ellipsis}
+.bbl-dd{position:relative;flex:none;max-width:min(340px,62vw)}
+.bbl-dd-trigger{display:flex;align-items:center;gap:6px;max-width:100%;padding:4px 8px;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:6px;background:var(--dsw-alias-bg-base,#1f2329);color:var(--dsw-alias-label-primary,inherit);font-size:13px;font-family:inherit;line-height:20px;cursor:pointer}
+.bbl-dd-trigger:hover{background:var(--dsw-alias-bg-layer-2,#23272e)}
+.bbl-dd-trigger:disabled{color:var(--dsw-alias-label-dimmed,#6b7280);cursor:default}
+.bbl-dd-trigger-open{border-color:var(--dsw-alias-state-business-primary,#6a9bff)}
+.bbl-dd-label{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.bbl-dd-chevron{flex:none;color:var(--dsw-alias-label-caption,#8a919c);font-size:10px}
+.bbl-dd-menu{position:absolute;right:0;top:calc(100% + 4px);z-index:2147483200;display:flex;flex-direction:column;gap:2px;padding:4px;width:max-content;min-width:min(240px,calc(100vw - 32px));max-width:min(420px,calc(100vw - 32px));max-height:min(320px,50vh);overflow-y:auto;border:1px solid var(--dsw-alias-border-l2,rgba(255,255,255,.14));border-radius:10px;background:var(--dsw-specific-menu,#23272e);box-shadow:0 8px 28px rgba(0,0,0,.36)}
+.bbl-dd-option{display:block;width:100%;padding:6px 8px;border:none;border-radius:6px;background:0 0;color:var(--dsw-alias-label-primary,inherit);font-size:13px;font-family:inherit;line-height:20px;text-align:left;white-space:nowrap;cursor:pointer}
+.bbl-dd-option:hover{background:var(--dsw-alias-interactive-bg-hover,rgba(255,255,255,.07))}
+.bbl-dd-option-active{color:var(--dsw-alias-state-business-primary,#6a9bff);font-weight:600}
 @media (max-width:720px){.bbl{width:calc(100vw - 16px)}}
 `
 
@@ -701,38 +778,36 @@ function SettingsPage(): React.ReactNode {
 
   const modelRows: React.ReactNode[] = [
     row('模型来源',
-      React.createElement('select',
-        {
-          value: followDefault ? '' : settings.provider,
-          onChange: (ev: React.ChangeEvent<HTMLSelectElement>) => {
-            const value = ev.target.value
-            if (value === '') submitSettings({ provider: '', model: '' })
-            else {
-              // Default to the provider's first advertised model so the pair is
-              // always complete.
-              const first = modelState.directory.models[value]?.[0]?.id ?? ''
-              submitSettings({ provider: value, model: first })
-            }
-          },
+      React.createElement(Dropdown, {
+        value: followDefault ? '' : settings.provider,
+        options: [
+          { value: '', label: '跟随对话默认模型' },
+          ...providers.map((provider) => ({ value: provider.id, label: provider.name })),
+        ],
+        onChange: (value: string) => {
+          if (value === '') submitSettings({ provider: '', model: '' })
+          else {
+            // Default to the provider's first advertised model so the pair is
+            // always complete.
+            const first = modelState.directory.models[value]?.[0]?.id ?? ''
+            submitSettings({ provider: value, model: first })
+          }
         },
-        React.createElement('option', { key: '__default', value: '' }, '跟随对话默认模型'),
-        providers.map((provider) =>
-          React.createElement('option', { key: provider.id, value: provider.id }, provider.name)),
-      )),
+      })),
   ]
 
   if (!followDefault) {
     modelRows.push(row('解释所用模型',
-      React.createElement('select',
-        {
-          value: settings.model,
-          onChange: (ev: React.ChangeEvent<HTMLSelectElement>) => submitSettings({ model: ev.target.value }),
-        },
-        providerModels.length === 0
-          ? [React.createElement('option', { key: settings.model, value: settings.model }, settings.model || '（该 provider 未声明模型）')]
-          : providerModels.map((entry) =>
-              React.createElement('option', { key: entry.id, value: entry.id }, entry.name === entry.id ? entry.id : `${entry.name}（${entry.id}）`)),
-      )))
+      React.createElement(Dropdown, {
+        value: settings.model,
+        options: providerModels.length === 0
+          ? [{ value: settings.model, label: settings.model || '（该 provider 未声明模型）' }]
+          : providerModels.map((entry) => ({
+              value: entry.id,
+              label: entry.name === entry.id ? entry.id : `${entry.name}（${entry.id}）`,
+            })),
+        onChange: (value: string) => submitSettings({ model: value }),
+      })))
   }
 
   const effectiveLine = modelState.effective === null
@@ -758,13 +833,11 @@ function SettingsPage(): React.ReactNode {
         onChange: (ev: React.ChangeEvent<HTMLInputElement>) => submitSettings({ maxChars: Math.min(1000, Math.max(50, Number(ev.target.value) || 300)) }),
       })),
     row('思考强度',
-      React.createElement('select',
-        {
-          value: settings.effort,
-          onChange: (ev: React.ChangeEvent<HTMLSelectElement>) => submitSettings({ effort: ev.target.value }),
-        },
-        EFFORT_OPTIONS.map((option) =>
-          React.createElement('option', { key: option.value, value: option.value }, option.label))),
+      React.createElement(Dropdown, {
+        value: settings.effort,
+        options: EFFORT_OPTIONS.map((option) => ({ value: option.value, label: option.label })),
+        onChange: (value: string) => submitSettings({ effort: value }),
+      }),
     ),
     React.createElement('div', { className: 'bbl-set-sub' }, '独立模型配置'),
     ...modelRows,
